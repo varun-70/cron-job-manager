@@ -21,17 +21,20 @@ jobs:
           # Use input ID if manual, otherwise default to '01' for schedule
           ID: ${{ github.event.inputs.project_id || '01' }}
         run: |
-          # Extract the specific link from the JSON object
-          PICKED_URL=$(echo '$REPO_MAP' | jq -r --arg ID "$ID" '.[$ID]')
+            # Use a heredoc to safely pass the JSON to jq
+            PICKED_URL=$(jq -r --arg ID "$ID" '.[$ID]' <<EOF
+            $REPO_MAP
+            EOF
+            )
           
-          if [ "$PICKED_URL" == "null" ]; then
-            echo "Error: Project ID not found in map."
-            exit 1
-          fi
+            if [ "$PICKED_URL" == "null" ] || [ -z "$PICKED_URL" ]; then
+                echo "::error::Project ID '$ID' not found in REPO_MAP or JSON is invalid."
+                exit 1
+            fi
 
-          # Mask the URL so it doesn't show in logs
-          echo "::add-mask::$PICKED_URL"
-          echo "target_url=$PICKED_URL" >> $GITHUB_OUTPUT
+            # Mask the URL so it doesn't show in logs
+            echo "::add-mask::$PICKED_URL"
+            echo "target_url=$PICKED_URL" >> $GITHUB_OUTPUT
 
       - name: Clone and Run
         env:
