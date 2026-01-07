@@ -1,0 +1,62 @@
+name: Multi-Project Executor
+
+on:
+  schedule:
+    - cron: '50 3 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'Which project ID to run? (e.g., 01)'
+        required: true
+        default: '01'
+
+jobs:
+  execute-private-repo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract Project Link
+        id: vars
+        env:
+          REPO_MAP: ${{ secrets.PRIVATE_REPO_URL }}
+          # Use input ID if manual, otherwise default to '01' for schedule
+          ID: ${{ github.event.inputs.project_id || '01' }}
+        run: |
+          # Extract the specific link from the JSON object
+          PICKED_URL=$(echo '$REPO_MAP' | jq -r --arg ID "$ID" '.[$ID]')
+          
+          if [ "$PICKED_URL" == "null" ]; then
+            echo "Error: Project ID not found in map."
+            exit 1
+          fi
+
+          # Mask the URL so it doesn't show in logs
+          echo "::add-mask::$PICKED_URL"
+          echo "target_url=$PICKED_URL" >> $GITHUB_OUTPUT
+
+      - name: Clone and Run
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          TARGET_URL: ${{ steps.vars.outputs.target_url }}
+          KITE_USER: ${{ secrets.KITE_USER_ID }}
+          KITE_TOKEN: ${{ secrets.KITE_ENCTOKEN }}
+        run: |
+          # Construct authenticated URL
+          AUTH_URL=$(echo $TARGET_URL | sed "s/https:\/\//https:\/\/x-access-token:${GH_TOKEN}@/")
+          
+          # Clone quietly and move into workspace
+          git clone --depth 1 "$AUTH_URL" workspace -q
+          cd workspace
+          
+          # Standard execution steps
+          pip install -r requirements.txt --quiet
+          KITE_USER_ID=$KITE_USER KITE_ENCTOKEN=$KITE_TOKEN python fetch_stock_data.py --silent > /dev/null 2>&1
+          
+          # Move artifacts out before workspace is wiped
+          mv *.csv ../ 2>/dev/null || true
+
+      - name: Save Data
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-data-${{ github.run_id }}
+          path: "*.csv"
+          retention-days: 1
